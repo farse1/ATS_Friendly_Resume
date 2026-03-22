@@ -1,0 +1,5 @@
+streamlit
+langchain-openai
+pymupdf
+python-docx
+fpdf2
