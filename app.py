@@ -8,9 +8,30 @@ import json
 import re
 import io
 
-st.set_page_config(page_title="ATS Resume Architect", page_icon="📄", layout="wide")
+st.set_page_config(page_title="ATS Resume & PDF/Word Generator", page_icon="📄", layout="wide")
 
-# --- 1. HELPERS: TEXT EXTRACTION ---
+# --- 1. ROBUST TEXT CLEANING (Fixes PDF Generation Errors) ---
+def clean_for_pdf(text):
+    """Replaces non-Latin-1 characters that cause FPDF to crash."""
+    if not text:
+        return ""
+    # Replace common problematic characters
+    replacements = {
+        "\u2013": "-", # en dash
+        "\u2014": "-", # em dash
+        "\u2018": "'", # left single quote
+        "\u2019": "'", # right single quote
+        "\u201c": '"', # left double quote
+        "\u201d": '"', # right double quote
+        "\u2022": "*", # bullet point
+        "\u2026": "...", # ellipsis
+    }
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    # Final fallback: encode to latin-1 and ignore anything else
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
+# --- 2. HELPERS: TEXT EXTRACTION ---
 def extract_text(uploaded_file):
     if uploaded_file is None:
         return ""
@@ -22,11 +43,12 @@ def extract_text(uploaded_file):
         elif file_ext == 'docx':
             doc = Document(uploaded_file)
             return "\n".join([para.text for para in doc.paragraphs])
-    except Exception:
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
         return ""
     return ""
 
-# --- 2. HELPERS: WORD (.DOCX) GENERATION ---
+# --- 3. HELPERS: WORD (.DOCX) GENERATION ---
 def create_docx(data):
     doc = Document()
     
@@ -34,19 +56,18 @@ def create_docx(data):
     header = doc.add_paragraph()
     run = header.add_run(data.get("name", "RESUME").upper())
     run.bold = True
-    run.font.size = Pt(16)
+    run.font.size = Pt(18)
     header.alignment = 1 # Center
     
     contact = doc.add_paragraph()
     contact.add_run(f"{data.get('email', '')}  |  {data.get('phone', '')}  |  {data.get('location', '')}")
     contact.alignment = 1
     
-    # Helper to add sections
     def add_section(title, content):
         if content:
             doc.add_heading(title.upper(), level=1)
             p = doc.add_paragraph(content)
-            p.style.font.size = Pt(10)
+            p.style.font.size = Pt(11)
 
     add_section("Professional Summary", data.get("Professional_Summary"))
     add_section("Core Competencies", data.get("Core_Competencies"))
@@ -58,139 +79,125 @@ def create_docx(data):
     doc.save(file_stream)
     return file_stream.getvalue()
 
-# --- 3. HELPERS: PDF GENERATION ---
+# --- 4. HELPERS: PDF GENERATION (The Fix is Here) ---
 def create_pdf(data):
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    
-    # Title
-    pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(0, 10, data.get("name", "RESUME").upper(), ln=True, align='C')
-    
-    # Contact
-    pdf.set_font("Helvetica", '', 10)
-    contact_info = f"{data.get('email', '')} | {data.get('phone', '')} | {data.get('location', '')}"
-    pdf.cell(0, 5, contact_info, ln=True, align='C')
-    pdf.ln(5)
+    try:
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+        
+        # Name
+        pdf.set_font("Helvetica", 'B', 16)
+        pdf.cell(0, 10, clean_for_pdf(data.get("name", "RESUME")).upper(), ln=True, align='C')
+        
+        # Contact
+        pdf.set_font("Helvetica", '', 10)
+        contact_info = f"{data.get('email', '')} | {data.get('phone', '')} | {data.get('location', '')}"
+        pdf.cell(0, 5, clean_for_pdf(contact_info), ln=True, align='C')
+        pdf.ln(5)
 
-    sections = [
-        ("Professional Summary", "Professional_Summary"),
-        ("Core Competencies", "Core_Competencies"),
-        ("Work Experience", "Work_Experience"),
-        ("Education", "Education"),
-        ("Certifications", "Certifications")
-    ]
-    
-    for title, key in sections:
-        content = data.get(key, "")
-        if content:
-            pdf.set_font("Helvetica", 'B', 12)
-            pdf.set_fill_color(240, 240, 240)
-            pdf.cell(0, 8, title.upper(), ln=True, fill=True)
-            pdf.ln(2)
-            pdf.set_font("Helvetica", '', 10)
-            # Standardizing text for PDF safety
-            clean_text = content.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 5, clean_text)
-            pdf.ln(4)
-            
-    return pdf.output(dest='S')
+        sections = [
+            ("Professional Summary", "Professional_Summary"),
+            ("Core Competencies", "Core_Competencies"),
+            ("Work Experience", "Work_Experience"),
+            ("Education", "Education"),
+            ("Certifications", "Certifications")
+        ]
+        
+        for title, key in sections:
+            content = data.get(key, "")
+            if content:
+                pdf.set_font("Helvetica", 'B', 12)
+                pdf.set_fill_color(240, 240, 240)
+                pdf.cell(0, 8, title.upper(), ln=True, fill=True)
+                pdf.ln(2)
+                
+                pdf.set_font("Helvetica", '', 10)
+                # Clean the content specifically for PDF output
+                pdf.multi_cell(0, 5, clean_for_pdf(content))
+                pdf.ln(4)
+                
+        return pdf.output() # In fpdf2, .output() returns bytes by default
+    except Exception as e:
+        st.error(f"PDF Generation Failed: {e}")
+        return None
 
-# --- 4. MAIN UI ---
-st.title("🎯 ATS Friendly Resume Generator")
-st.info("Paste the job description and your current resume. The AI will generate an optimized, high-score resume in both Word and PDF formats.")
+# --- 5. MAIN UI ---
+st.title("🎯 ATS Resume Master")
+st.markdown("Optimizing for Job Descriptions & Generating PDF/Word Files")
 
 with st.sidebar:
-    st.header("🔑 API Setup")
+    st.header("🔑 Authentication")
     api_key = st.secrets.get("OPENAI_API_KEY") or st.text_input("OpenAI API Key", type="password")
     st.divider()
-    st.markdown("### ATS Guidelines:")
-    st.caption("1. No Columns/Tables\n2. Standard Headings\n3. Keyword Matching\n4. Simple Fonts")
+    st.info("This app cleans all special AI characters to ensure the PDF renders perfectly.")
 
-# Inputs
 c1, c2 = st.columns(2)
 with c1:
-    st.subheader("📋 Job Description")
-    jd_upload = st.file_uploader("Upload JD", type=["pdf", "docx"], key="jd_up")
-    jd_text = st.text_area("Or Paste JD here:", height=250, key="jd_txt")
-
+    jd_input = st.text_area("📋 Paste Job Description (JD):", height=250)
 with c2:
-    st.subheader("📄 Current Resume")
-    res_upload = st.file_uploader("Upload Resume", type=["pdf", "docx"], key="res_up")
-    res_text = st.text_area("Or Paste Resume here:", height=250, key="res_txt")
+    res_file = st.file_uploader("📄 Upload your Resume (PDF/Docx):", type=["pdf", "docx"])
+    res_input = st.text_area("Or Paste Current Resume Text:", height=150)
 
-if st.button("🚀 Optimize & Generate Files", type="primary"):
-    # Content collection
-    final_jd = jd_text if jd_text else extract_text(jd_upload)
-    final_res = res_text if res_text else extract_text(res_upload)
+if st.button("🚀 Optimize & Create Downloads", type="primary"):
+    final_res = res_input if res_input else extract_text(res_file)
     
-    if not final_jd or not final_res or not api_key:
-        st.error("Missing Job Description, Resume, or API Key.")
+    if not jd_input or not final_res or not api_key:
+        st.error("Please provide JD, Resume, and API Key.")
     else:
         try:
-            with st.spinner("Analyzing keywords and restructuring for ATS..."):
-                llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.2)
+            with st.spinner("Analyzing keywords and formatting..."):
+                llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.1)
                 
                 prompt = f"""
-                You are a Senior Technical Recruiter. Optimize this resume for the provided Job Description (JD).
+                Act as an expert ATS Resume Writer. Rewrite this resume for the following Job Description.
+                Use keywords from the JD. Format in STAR method. Keep it professional.
                 
-                RULES:
-                1. Identify the most important keywords in the JD.
-                2. Use those keywords naturally in the Summary, Competencies, and Experience.
-                3. Rewrite Experience bullet points using the STAR method (Situation, Task, Action, Result).
-                4. Output MUST be in JSON format.
-                
-                JD: {final_jd}
+                JD: {jd_input}
                 RESUME: {final_res}
                 
-                FORMAT:
+                OUTPUT strictly as JSON:
                 {{
                   "name": "Full Name",
-                  "email": "email@example.com",
-                  "phone": "Phone Number",
+                  "email": "Email",
+                  "phone": "Phone",
                   "location": "City, State",
-                  "Professional_Summary": "ATS optimized summary...",
-                  "Core_Competencies": "Skill 1, Skill 2, Skill 3...",
-                  "Work_Experience": "- Company A: Bullet points...\\n- Company B: Bullet points...",
-                  "Education": "Degree, University",
-                  "Certifications": "Relevant certs only"
+                  "Professional_Summary": "text",
+                  "Core_Competencies": "list",
+                  "Work_Experience": "bullet points",
+                  "Education": "text",
+                  "Certifications": "text"
                 }}
                 """
                 
                 response = llm.invoke(prompt)
-                
-                # Robust JSON cleaning
                 json_str = re.search(r"\{.*\}", response.content, re.DOTALL).group()
                 resume_data = json.loads(json_str)
                 
-                # Create the Files
-                docx_data = create_docx(resume_data)
-                pdf_data = create_pdf(resume_data)
+                # Create Files
+                docx_bytes = create_docx(resume_data)
+                pdf_bytes = create_pdf(resume_data)
                 
-                st.success("✅ Resume Optimized Successfully!")
-                
-                # Display Analysis Results
-                with st.expander("🔍 View Optimized Content Preview"):
-                    st.write(f"**Targeting Name:** {resume_data['name']}")
-                    st.write(f"**Keywords Added:** {resume_data['Core_Competencies']}")
-                
-                # Download Buttons
-                btn_c1, btn_c2 = st.columns(2)
-                with btn_c1:
-                    st.download_button(
-                        label="📥 Download Word (.docx)",
-                        data=docx_data,
-                        file_name="ATS_Resume_Optimized.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    )
-                with btn_c2:
-                    st.download_button(
-                        label="📥 Download PDF (.pdf)",
-                        data=pdf_data,
-                        file_name="ATS_Resume_Optimized.pdf",
-                        mime="application/pdf"
-                    )
+                if pdf_bytes and docx_bytes:
+                    st.success("✅ Both PDF and Word files generated successfully!")
                     
+                    col_dl1, col_dl2 = st.columns(2)
+                    with col_dl1:
+                        st.download_button(
+                            label="📥 Download ATS Word (.docx)",
+                            data=docx_bytes,
+                            file_name="ATS_Optimized_Resume.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+                    with col_dl2:
+                        st.download_button(
+                            label="📥 Download ATS PDF (.pdf)",
+                            data=pdf_bytes,
+                            file_name="ATS_Optimized_Resume.pdf",
+                            mime="application/pdf"
+                        )
+                else:
+                    st.error("There was a problem generating the files. Check your content for unusual symbols.")
+
         except Exception as e:
-            st.error(f"⚠️ An error occurred: {str(e)}")
+            st.error(f"Process Error: {e}")
