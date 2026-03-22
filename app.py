@@ -8,7 +8,7 @@ import json
 import re
 import io
 
-st.set_page_config(page_title="AI ATS Resume Architect", page_icon="📄", layout="wide")
+st.set_page_config(page_title="ATS Resume Architect", page_icon="📄", layout="wide")
 
 # --- 1. HELPERS: TEXT EXTRACTION ---
 def extract_text(uploaded_file):
@@ -98,7 +98,7 @@ def create_pdf(data):
     return pdf.output(dest='S')
 
 # --- 4. MAIN UI ---
-st.title("🎯 AI ATS Resume & Word/PDF Generator")
+st.title("🎯 ATS Friendly Resume Generator")
 st.info("Paste the job description and your current resume. The AI will generate an optimized, high-score resume in both Word and PDF formats.")
 
 with st.sidebar:
@@ -129,7 +129,7 @@ if st.button("🚀 Optimize & Generate Files", type="primary"):
         st.error("Missing Job Description, Resume, or API Key.")
     else:
         try:
-            with st.spinner("AI is analyzing keywords and restructuring for ATS..."):
+            with st.spinner("Analyzing keywords and restructuring for ATS..."):
                 llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.2)
                 
                 prompt = f"""
